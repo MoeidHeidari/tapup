@@ -1,0 +1,16 @@
+{
+  "name": "tapup",
+  "version": "1.0.0",
+  "description": "2D top-down arcade game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:gh-pages": "npm run build -- --base=/${npm_package_name}/",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}
