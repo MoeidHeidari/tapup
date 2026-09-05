@@ -1,6 +1,6 @@
-import { getHighScore } from '../storage/Storage';
+import { getHighScore, DifficultyLevel } from '../storage/Storage';
 
-export type DifficultyLevel = 'easy' | 'medium' | 'hard';
+export type { DifficultyLevel };
 
 export class HUD {
   private container: HTMLDivElement;
@@ -12,6 +12,7 @@ export class HUD {
   private multiplierDisplay: HTMLDivElement;
   private powerDisplay: HTMLDivElement;
   private chargeDisplay: HTMLDivElement;
+  private speedDisplay: HTMLDivElement;
   private achievementToast: HTMLDivElement;
   private startButton!: HTMLButtonElement;
   private retryButton!: HTMLButtonElement;
@@ -36,6 +37,7 @@ export class HUD {
     this.multiplierDisplay = this.createMultiplierDisplay();
     this.powerDisplay = this.createPowerDisplay();
     this.chargeDisplay = this.createChargeDisplay();
+    this.speedDisplay = this.createSpeedDisplay();
     this.achievementToast = this.createAchievementToast();
 
     this.container.appendChild(this.menuScreen);
@@ -44,12 +46,25 @@ export class HUD {
     this.container.appendChild(this.multiplierDisplay);
     this.container.appendChild(this.powerDisplay);
     this.container.appendChild(this.chargeDisplay);
+    this.container.appendChild(this.speedDisplay);
     this.container.appendChild(this.achievementToast);
 
     parent.appendChild(this.container);
+    this.injectPowerAnimations();
     this.refreshDifficultyStyles();
     this.updateResponsiveGameplayLayout();
     window.addEventListener('resize', this.updateResponsiveGameplayLayout);
+  }
+
+  private injectPowerAnimations(): void {
+    const style = document.createElement('style');
+    style.textContent = [
+      '@keyframes tapup-power-pulse { 0%,100% { transform:scale(1);} 50% { transform:scale(1.12);} }',
+      '@keyframes tapup-power-glow-magnet { 0%,100% { box-shadow:0 0 8px rgba(122,215,255,0.35), inset 0 0 6px rgba(122,215,255,0.18);} 50% { box-shadow:0 0 18px rgba(122,215,255,0.85), inset 0 0 10px rgba(122,215,255,0.4);} }',
+      '@keyframes tapup-power-glow-shield { 0%,100% { box-shadow:0 0 8px rgba(111,240,255,0.35), inset 0 0 6px rgba(111,240,255,0.18);} 50% { box-shadow:0 0 18px rgba(111,240,255,0.85), inset 0 0 10px rgba(111,240,255,0.4);} }',
+      '@keyframes tapup-power-glow-slow { 0%,100% { box-shadow:0 0 8px rgba(199,146,255,0.35), inset 0 0 6px rgba(199,146,255,0.18);} 50% { box-shadow:0 0 18px rgba(199,146,255,0.85), inset 0 0 10px rgba(199,146,255,0.4);} }',
+    ].join('\n');
+    document.head.appendChild(style);
   }
 
   private updateResponsiveGameplayLayout = (): void => {
@@ -85,6 +100,11 @@ export class HUD {
       this.chargeDisplay.style.padding = '6px 7px';
       this.chargeDisplay.style.gap = '4px';
 
+      this.speedDisplay.style.top = 'calc(env(safe-area-inset-top) + 52px)';
+      this.speedDisplay.style.right = 'calc(env(safe-area-inset-right) + 8px)';
+      this.speedDisplay.style.padding = '5px 9px';
+      this.speedDisplay.style.fontSize = '0.68rem';
+
       this.achievementToast.style.bottom = 'calc(env(safe-area-inset-bottom) + 48px)';
       this.achievementToast.style.fontSize = '0.72rem';
       this.achievementToast.style.padding = '9px 12px';
@@ -119,6 +139,11 @@ export class HUD {
       this.chargeDisplay.style.bottom = 'calc(env(safe-area-inset-bottom) + 10px)';
       this.chargeDisplay.style.padding = '8px 9px';
       this.chargeDisplay.style.gap = '5px';
+
+      this.speedDisplay.style.top = 'calc(env(safe-area-inset-top) + 62px)';
+      this.speedDisplay.style.right = 'calc(env(safe-area-inset-right) + 10px)';
+      this.speedDisplay.style.padding = '7px 11px';
+      this.speedDisplay.style.fontSize = '0.8rem';
 
       this.achievementToast.style.bottom = 'calc(env(safe-area-inset-bottom) + 84px)';
       this.achievementToast.style.fontSize = '0.93rem';
@@ -193,7 +218,16 @@ export class HUD {
 
     const hsWrap = document.createElement('div');
     hsWrap.style.cssText = 'font-size:clamp(0.76rem,2.8vw,0.88rem);color:rgba(255,255,255,0.56);margin-top:1rem;letter-spacing:0.08em;';
-    hsWrap.innerHTML = 'HIGH SCORE: <span class="hs-menu">' + getHighScore() + '</span>';
+    const hsLabel = document.createElement('span');
+    hsLabel.classList.add('hs-label');
+    hsLabel.textContent = 'HIGH SCORE: ';
+    const hsVal = document.createElement('span');
+    hsVal.classList.add('hs-menu');
+    hsVal.textContent = '0';
+    hsWrap.appendChild(hsLabel);
+    hsWrap.appendChild(hsVal);
+
+    const manual = this.createManualButton();
 
     panel.appendChild(title);
     panel.appendChild(sub);
@@ -202,8 +236,89 @@ export class HUD {
     panel.appendChild(difficultyRow);
     panel.appendChild(this.startButton);
     panel.appendChild(hsWrap);
+    panel.appendChild(manual);
     el.appendChild(panel);
     return el;
+  }
+
+  private createManualButton(): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'width:100%;margin-top:1rem;pointer-events:auto;';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.textContent = 'HOW TO PLAY  ▾';
+    toggle.style.cssText = 'pointer-events:auto;width:100%;padding:10px 12px;border-radius:13px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.06);color:rgba(245,250,255,0.85);font-size:clamp(0.72rem,2.7vw,0.82rem);font-weight:800;letter-spacing:0.12em;cursor:pointer;transition:background 0.18s, border-color 0.18s;';
+    toggle.addEventListener('pointerdown', (e) => e.stopPropagation());
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = panel.style.display !== 'none';
+      panel.style.display = open ? 'none' : 'block';
+      toggle.textContent = open ? 'HOW TO PLAY  ▾' : 'HOW TO PLAY  ▴';
+    });
+
+    const panel = document.createElement('div');
+    panel.style.cssText = 'display:none;margin-top:0.6rem;max-height:min(46vh,340px);overflow-y:auto;padding:0 4px;color:rgba(235,242,255,0.88);font-size:clamp(0.7rem,2.6vw,0.8rem);line-height:1.45;text-align:left;letter-spacing:0.02em;';
+
+    const section = (title: string): string => `<div style="margin-top:0.65rem;font-weight:900;letter-spacing:0.14em;color:#ffd93d;font-size:clamp(0.74rem,2.7vw,0.84rem);">${title}</div>`;
+    const row = (label: string, desc: string): string => `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-top:3px;"><span style="color:#cfe3ff;font-weight:700;white-space:nowrap;">${label}</span><span style="text-align:right;color:rgba(225,236,252,0.82);">${desc}</span></div>`;
+
+    panel.innerHTML = [
+      section('CONTROLS'),
+      row('TAP / SPACE / ↑', 'Jump outward from the orbit'),
+      row('AUTO ROTATION', 'You orbit automatically'),
+      '',
+      section('RULES'),
+      'Grab <b>white</b> objects to score. <b>Gold diamonds</b> are worth <b>10 points</b>. <b>Dodge orange ones</b> - they end the run. Don\u2019t fall back to the <b>center hole</b>. Split objects have an orange half and a white half - pick your side!',
+      'The arena <b>grows</b> with every lap. Danger escalates as your score climbs.',
+      '',
+      section('POWERUPS'),
+      row('STAR', 'Huge jump boost + bigger range for 8s'),
+      row('MAGNET', 'Pulls nearby whites and gold straight to you'),
+      row('SWEEP', 'Full 360 spin that cleans the field of everything (1pt each), camera locks on'),
+      row('NOVA', 'Wipes every enemy in your outward line'),
+      row('SHIELD', 'Survive one orange hit safely'),
+      row('SLOW', 'Slows all enemies for a few seconds'),
+      '',
+      section('ENEMIES'),
+      row('BASIC / DRIFT', 'Straight flyers, some sway side to side'),
+      row('ORBIT / SLICER', 'Circle the center unpredictably'),
+      row('HOMING', 'Chases your angle - outrun it'),
+      row('PHANTOM', 'Invisible until it gets close'),
+      row('SHRINKER', 'Shrinks as it flies, tricky to read'),
+      row('MASTER', 'Big arena-scouring hunter'),
+      '',
+      section('SPEED LEVELS'),
+      'Your <b>rotation speed</b> rises at every <b>100 points</b> (SPEED 1-6). Higher levels spin the arena faster - good luck keeping up!',
+      '',
+      section('ACHIEVEMENTS'),
+      [
+        'First Dodge - dodge 1 enemy',
+        'Rhythm x10 - dodge 10 enemies',
+        'Close Call - 3 near misses',
+        'Orbit Survivor - survive 30s',
+        'Clockwork - survive 60s',
+        'Star Collector - pick a star',
+        'Magnetic Sense - pick a magnet',
+        'White Reaper - pick a sweep',
+        'Sky Cleaner - pick a nova',
+        'Iron Shield - pick a shield',
+        'Time Freeze - pick a slow power',
+        'Saved by Shield - survive a hit',
+        'Centurion - reach 100 pts',
+        'Triple Threat - reach 300 pts',
+        'Speed Up - reach SPEED 2',
+        'Hyper Mode - reach SPEED 4',
+        '2x Orbit - earn the 2x multiplier',
+        '16x Orbit - earn the 16x multiplier',
+        'Fast 360 Spin - complete a full 360 field clear',
+        'Gold Rush - collect a gold diamond',
+      ].map((a) => `<div style="margin-top:2px;">\u2022 ${a}</div>`).join(''),
+    ].join('');
+
+    wrap.appendChild(toggle);
+    wrap.appendChild(panel);
+    return wrap;
   }
 
   private refreshDifficultyStyles(): void {
@@ -239,6 +354,16 @@ export class HUD {
       this.startButton.style.background = 'rgba(255,255,255,0.1)';
       this.startButton.style.borderColor = 'rgba(255,255,255,0.22)';
       this.startButton.style.boxShadow = 'none';
+    }
+
+    this.refreshHighScoreLabel();
+  }
+
+  private refreshHighScoreLabel(): void {
+    const difficulty = this.selectedDifficulty ?? 'medium';
+    const hsEl = this.menuScreen.querySelector('.hs-menu');
+    if (hsEl) {
+      hsEl.textContent = String(getHighScore(difficulty));
     }
   }
 
@@ -282,7 +407,7 @@ export class HUD {
 
     const hs = document.createElement('div');
     hs.style.cssText = 'font-size:0.95rem;color:rgba(255,255,255,0.58);margin-top:0.6rem;letter-spacing:0.09em;';
-    hs.innerHTML = 'HIGH SCORE: <span class="hs-over">' + getHighScore() + '</span>';
+    hs.innerHTML = 'HIGH SCORE: <span class="hs-over">0</span>';
 
     this.retryButton = document.createElement('button');
     this.retryButton.type = 'button';
@@ -311,6 +436,13 @@ export class HUD {
     const el = document.createElement('div');
     el.style.cssText = 'position:absolute;top:calc(env(safe-area-inset-top) + 16px);left:calc(env(safe-area-inset-left) + 14px);padding:9px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.2);background:linear-gradient(180deg, rgba(9,16,28,0.78), rgba(9,16,28,0.52));color:rgba(255,255,255,0.98);font-size:0.88rem;font-weight:800;letter-spacing:0.1em;opacity:0;transition:opacity 0.3s, transform 0.22s;text-shadow:0 2px 8px rgba(0,0,0,0.4);';
     el.textContent = 'POINT UNIT x1';
+    return el;
+  }
+
+  private createSpeedDisplay(): HTMLDivElement {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:absolute;top:calc(env(safe-area-inset-top) + 62px);right:calc(env(safe-area-inset-right) + 10px);padding:7px 11px;border-radius:12px;border:1px solid rgba(255,120,84,0.32);background:linear-gradient(180deg, rgba(48,16,10,0.72), rgba(30,12,8,0.55));color:#ffb48a;font-size:0.8rem;font-weight:800;letter-spacing:0.1em;opacity:0;transition:opacity 0.3s;';
+    el.textContent = 'SPEED 1';
     return el;
   }
 
@@ -370,10 +502,10 @@ export class HUD {
     this.multiplierDisplay.style.opacity = '0';
     this.powerDisplay.style.opacity = '0';
     this.chargeDisplay.style.opacity = '0';
+    this.speedDisplay.style.opacity = '0';
     this.gameOverScreen.style.opacity = '0';
     this.gameOverScreen.style.pointerEvents = 'none';
-    const hs = this.menuScreen.querySelector('.hs-menu');
-    if (hs) hs.textContent = String(getHighScore());
+    this.refreshHighScoreLabel();
     this.refreshDifficultyStyles();
   }
 
@@ -386,6 +518,7 @@ export class HUD {
     this.multiplierDisplay.style.opacity = '1';
     this.powerDisplay.style.opacity = '1';
     this.chargeDisplay.style.opacity = '1';
+    this.speedDisplay.style.opacity = '1';
     this.gameOverScreen.style.opacity = '0';
     this.gameOverScreen.style.pointerEvents = 'none';
     this.score = 0;
@@ -396,7 +529,7 @@ export class HUD {
     this.powerDisplay.innerHTML = '';
   }
 
-  showGameOver(score: number): void {
+  showGameOver(score: number, difficulty: DifficultyLevel): void {
     this.menuScreen.style.display = 'none';
     this.gameOverScreen.style.display = 'flex';
     this.menuScreen.style.opacity = '0';
@@ -405,12 +538,14 @@ export class HUD {
     this.multiplierDisplay.style.opacity = '0';
     this.powerDisplay.style.opacity = '0';
     this.chargeDisplay.style.opacity = '0';
+    this.speedDisplay.style.opacity = '0';
     this.gameOverScreen.style.opacity = '1';
     this.gameOverScreen.style.pointerEvents = 'auto';
     const finalScore = this.gameOverScreen.querySelector('.final-score');
     if (finalScore) finalScore.textContent = String(score);
     const hs = this.gameOverScreen.querySelector('.hs-over');
-    if (hs) hs.textContent = String(getHighScore());
+    const diffName = difficulty === 'easy' ? 'EASY' : difficulty === 'hard' ? 'HARD' : 'MEDIUM';
+    if (hs) hs.textContent = `${diffName} ${String(getHighScore(difficulty))}`;
   }
 
   updateScore(score: number): void {
@@ -464,6 +599,11 @@ export class HUD {
     }, 180);
   }
 
+  updateSpeedLevel(level: number): void {
+    this.speedDisplay.textContent = `SPEED ${level}`;
+    this.speedDisplay.style.opacity = '1';
+  }
+
   updatePowerState(labels: string[]): void {
     if (labels.length === 0) {
       this.powerDisplay.innerHTML = '';
@@ -471,7 +611,7 @@ export class HUD {
     }
 
     const renderedLabels = this.compactHud
-      ? labels.map((label) => label.replace('MAGNET', 'MAG').replace('SWEEP', 'SWP'))
+      ? labels.map((label) => label.replace('MAGNET', 'MAG').replace('SWEEP', 'SWP').replace('SHIELD', 'SHLD').replace('SLOW', 'SLW'))
       : labels;
 
     this.powerDisplay.innerHTML = labels
@@ -488,10 +628,16 @@ export class HUD {
       return `${base}border:1px solid rgba(255,226,117,0.75);background:rgba(66,54,18,0.56);color:#ffe892;`;
     }
     if (label.startsWith('MAGNET')) {
-      return `${base}border:1px solid rgba(122,215,255,0.72);background:rgba(15,43,60,0.56);color:#abddff;`;
+      return `${base}border:1px solid rgba(122,215,255,0.72);background:rgba(15,43,60,0.56);color:#abddff;animation:tapup-power-glow-magnet 0.9s ease-in-out infinite;`;
     }
     if (label.startsWith('SWEEP')) {
       return `${base}border:1px solid rgba(170,255,146,0.72);background:rgba(24,56,28,0.56);color:#c5ffb3;`;
+    }
+    if (label.startsWith('SHIELD')) {
+      return `${base}border:1px solid rgba(111,240,255,0.72);background:rgba(12,44,52,0.56);color:#aef3ff;animation:tapup-power-glow-shield 1.1s ease-in-out infinite;`;
+    }
+    if (label.startsWith('SLOW')) {
+      return `${base}border:1px solid rgba(199,146,255,0.72);background:rgba(40,26,60,0.56);color:#e1c9ff;animation:tapup-power-glow-slow 1.3s ease-in-out infinite;`;
     }
     return `${base}border:1px solid rgba(255,255,255,0.22);background:rgba(9,16,28,0.56);color:rgba(245,250,255,0.98);`;
   }

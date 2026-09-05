@@ -6,7 +6,7 @@ import { InputManager } from '../input/InputManager';
 import { DifficultyLevel, HUD } from '../ui/HUD';
 import { SoundManager } from '../audio/SoundManager';
 import { getHighScore, setHighScore } from '../storage/Storage';
-import { POWER, RADIUS } from '../config/constants';
+import { GOLD, ORBIT, POWER, RADIUS } from '../config/constants';
 
 type GameState = 'menu' | 'playing' | 'gameover';
 
@@ -77,10 +77,18 @@ export class Game {
   private novasPicked = 0;
   private rangeBoostTimer = 0;
   private magnetTimer = 0;
+  private shieldTimer = 0;
+  private slowTimer = 0;
   private sweepActive = false;
   private sweepAngle = 0;
+  private shieldHits = 0;
+  private slowPicked = 0;
+  private shieldPicked = 0;
+  private goldsPicked = 0;
   private lastTime = 0;
   private animationId = 0;
+  private speedLevel = 0;
+  private fastSpins = 0;
 
   private readonly renderer: Renderer;
   private readonly arena: Arena;
@@ -105,8 +113,17 @@ export class Game {
     { id: 'first-magnet', title: 'Magnetic Sense', unlocked: (g) => g.magnetsPicked >= 1 },
     { id: 'first-sweep', title: 'White Reaper', unlocked: (g) => g.sweepPicked >= 1 },
     { id: 'first-nova', title: 'Sky Cleaner', unlocked: (g) => g.novasPicked >= 1 },
+    { id: 'first-shield', title: 'Iron Shield', unlocked: (g) => g.shieldPicked >= 1 },
+    { id: 'first-slow', title: 'Time Freeze', unlocked: (g) => g.slowPicked >= 1 },
+    { id: 'shield-save', title: 'Saved by Shield', unlocked: (g) => g.shieldHits >= 1 },
+    { id: 'score-100', title: 'Centurion', unlocked: (g) => g.score >= 100 },
+    { id: 'score-300', title: 'Triple Threat', unlocked: (g) => g.score >= 300 },
+    { id: 'speed-2', title: 'Speed Up', unlocked: (g) => g.getSpeedLevel() >= 2 },
+    { id: 'speed-4', title: 'Hyper Mode', unlocked: (g) => g.getSpeedLevel() >= 4 },
     { id: 'double-unit', title: '2x Orbit', unlocked: (g) => g.scoreUnit >= 2 },
     { id: 'mega-unit', title: '16x Orbit', unlocked: (g) => g.scoreUnit >= 16 },
+    { id: 'fast-spin', title: 'Fast 360 Spin', unlocked: (g) => g.fastSpins >= 1 },
+    { id: 'gold-rush', title: 'Gold Rush', unlocked: (g) => g.goldsPicked >= 1 },
   ];
 
   constructor(container: HTMLElement) {
@@ -223,6 +240,17 @@ export class Game {
     this.elapsed += dt;
     this.rangeBoostTimer = Math.max(0, this.rangeBoostTimer - dt);
     this.magnetTimer = Math.max(0, this.magnetTimer - dt);
+    this.shieldTimer = Math.max(0, this.shieldTimer - dt);
+    this.slowTimer = Math.max(0, this.slowTimer - dt);
+
+    const prevSpeedLevel = this.speedLevel;
+    this.speedLevel = this.computeSpeedLevel(this.score);
+    if (this.speedLevel > prevSpeedLevel) {
+      this.sounds.playMultiplier(this.speedLevel);
+    }
+    this.hud.updateSpeedLevel(this.speedLevel + 1);
+
+    const timeScale = this.slowTimer > 0 ? POWER.slowFactor : 1;
 
     const growthTurnsTarget = Math.max(1, RADIUS.growthTurnsToMax * this.activeTuning.rangeGrowthTurnsScale);
     const growthProgress = Math.min(1, this.completedTurns / growthTurnsTarget);
@@ -234,16 +262,21 @@ export class Game {
       baseMaxRadius + (this.rangeBoostTimer > 0 ? POWER.rangeBonus : 0)
     );
 
+    this.player.setShieldActive(this.shieldTimer > 0);
+
     if (this.sweepActive) {
       const prev = this.sweepAngle;
       this.sweepAngle += POWER.sweepAngularSpeed * dt;
-      const whiteSwept = this.obstacles.consumeWhitesBySweep(prev, this.sweepAngle);
-      if (whiteSwept > 0) {
-        this.addScore(whiteSwept);
+      const swept = this.obstacles.consumeAllBySweep(prev, this.sweepAngle);
+      if (swept > 0) {
+        this.addScore(swept);
       }
       if (this.sweepAngle >= Math.PI * 2) {
+        this.fastSpins += 1;
         this.sweepActive = false;
         this.sweepAngle = 0;
+        this.player.endSpin();
+        this.renderer.setCameraBoost(0);
       }
     }
 
@@ -255,6 +288,8 @@ export class Game {
     this.player.setCenter(cx, cy);
     this.obstacles.setCenter(cx, cy);
     this.arena.setCenter(cx, cy);
+
+    this.player.setAngularSpeedMultiplier(1 + this.speedLevel * ORBIT.speedUpPerLevel);
 
     if (this.input.consumeTap()) {
       if (this.player.jump(this.activeTuning.jumpImpulseScale)) {
@@ -285,6 +320,9 @@ export class Game {
       if (magnetResult.whiteCollected > 0) {
         this.addScore(magnetResult.whiteCollected);
       }
+      if (magnetResult.goldCollected > 0) {
+        this.addScore(magnetResult.goldCollected * GOLD.points);
+      }
     }
 
     this.arena.update(dt);
@@ -296,7 +334,8 @@ export class Game {
       this.player.getAngle(),
       this.player.x,
       this.player.y,
-      this.player.getBoundingRadius()
+      this.player.getBoundingRadius(),
+      timeScale
     );
     this.dodges += obstacleStats.passed;
     this.nearMisses += obstacleStats.nearMisses;
@@ -326,11 +365,26 @@ export class Game {
     this.player.draw(this.renderer.ctx);
     this.renderer.endWorld();
 
+    if (this.slowTimer > 0) {
+      const ctx = this.renderer.ctx;
+      const blink = 0.5 + 0.5 * Math.sin(this.elapsed * 6);
+      ctx.fillStyle = `rgba(140,80,220,${0.05 + blink * 0.03})`;
+      ctx.fillRect(0, 0, this.renderer.canvas.width, this.renderer.canvas.height);
+    }
+
     if (this.player.getReachedCenter()) {
       this.onGameOver();
       return;
     }
 
+    if (!this.sweepActive) {
+      this.resolveCollisions();
+    }
+
+    this.checkAchievements();
+  }
+
+  private resolveCollisions(): void {
     const collision = this.obstacles.resolveCollision(
       this.player.x, this.player.y, this.player.getBoundingRadius()
     );
@@ -339,6 +393,14 @@ export class Game {
       this.player.onWhiteCollected();
       this.player.applyExternalBoost(POWER.hitBounceImpulse);
       this.sounds.playScore(this.scoreUnit);
+    }
+
+    if (collision === 'gold') {
+      this.addScore(GOLD.points);
+      this.player.onWhiteCollected();
+      this.player.applyExternalBoost(POWER.hitBounceImpulse * 0.6);
+      this.sounds.playScore(this.scoreUnit);
+      this.goldsPicked += 1;
     }
 
     if (collision === 'power-star') {
@@ -358,11 +420,14 @@ export class Game {
       this.magnetsPicked += 1;
       this.hud.showAchievement('MAGNET BURST');
       this.sounds.playPower('magnet');
+      this.renderer.addShake(8);
     }
 
     if (collision === 'power-sweep') {
       this.sweepActive = true;
       this.sweepAngle = 0;
+      this.player.startSpin();
+      this.renderer.setCameraBoost(1);
       this.player.applyExternalBoost(POWER.hitBounceImpulse * 0.7);
       this.sweepPicked += 1;
       this.hud.showAchievement('SWEEP SPIN');
@@ -380,11 +445,33 @@ export class Game {
       this.sounds.playPower('nova');
     }
 
-    if (collision === 'orange' && !this.obstacles.isMagnetBurstActive()) {
-      this.onGameOver();
+    if (collision === 'power-shield') {
+      this.shieldTimer = POWER.shieldDuration;
+      this.player.triggerShieldPulse();
+      this.shieldPicked += 1;
+      this.hud.showAchievement('SHIELD ACTIVE');
+      this.sounds.playPower('shield');
     }
 
-    this.checkAchievements();
+    if (collision === 'power-slow') {
+      this.slowTimer = POWER.slowDuration;
+      this.slowPicked += 1;
+      this.hud.showAchievement('SLOW TIME');
+      this.sounds.playPower('slow');
+    }
+
+    if (collision === 'orange' && !this.obstacles.isMagnetBurstActive()) {
+      if (this.shieldTimer > 0) {
+        this.shieldTimer = 0;
+        this.shieldHits += 1;
+        this.player.triggerShieldPulse();
+        this.player.applyExternalBoost(POWER.hitBounceImpulse * 1.6);
+        this.hud.showAchievement('SHIELD BROKEN');
+        this.sounds.playPower('shield');
+      } else {
+        this.onGameOver();
+      }
+    }
   }
 
   private drawGameOver(cx: number, cy: number): void {
@@ -434,8 +521,15 @@ export class Game {
     this.sweepPicked = 0;
     this.magnetsPicked = 0;
     this.novasPicked = 0;
+this.shieldPicked = 0;
+    this.slowPicked = 0;
+    this.goldsPicked = 0;
+    this.fastSpins = 0;
+    this.speedLevel = 0;
     this.rangeBoostTimer = 0;
     this.magnetTimer = 0;
+    this.shieldTimer = 0;
+    this.slowTimer = 0;
     this.sweepActive = false;
     this.sweepAngle = 0;
     this.unlocked.clear();
@@ -454,9 +548,13 @@ export class Game {
   private onGameOver(): void {
     this.state = 'gameover';
     this.sounds.playGameOver();
-    const high = getHighScore();
-    if (this.score > high) setHighScore(Math.floor(this.score));
-    this.hud.showGameOver(Math.floor(this.score));
+    this.sweepActive = false;
+    this.sweepAngle = 0;
+    this.player.endSpin();
+    this.renderer.setCameraBoost(0);
+    const high = getHighScore(this.selectedDifficulty);
+    if (this.score > high) setHighScore(this.selectedDifficulty, Math.floor(this.score));
+    this.hud.showGameOver(Math.floor(this.score), this.selectedDifficulty);
   }
 
   private checkAchievements(): void {
@@ -466,14 +564,15 @@ export class Game {
       this.unlocked.add(achievement.id);
       this.hud.showAchievement(achievement.title);
       this.sounds.playAchievement(this.getAchievementTier(achievement.id));
+      this.obstacles.celebrate(this.player.x, this.player.y);
     }
   }
 
   private getAchievementTier(id: string): 'common' | 'rare' | 'epic' {
-    if (id === 'survivor-60' || id === 'mega-unit') {
+    if (id === 'survivor-60' || id === 'mega-unit' || id === 'score-300' || id === 'speed-4') {
       return 'epic';
     }
-    if (id === 'combo-10' || id === 'survivor-30' || id === 'double-unit') {
+    if (id === 'combo-10' || id === 'survivor-30' || id === 'double-unit' || id === 'score-100' || id === 'speed-2' || id === 'shield-save' || id === 'fast-spin' || id === 'gold-rush') {
       return 'rare';
     }
     return 'common';
@@ -489,6 +588,14 @@ export class Game {
     return Math.min(20, 1 + Math.floor(completedTurns / 2));
   }
 
+  private computeSpeedLevel(score: number): number {
+    return Math.min(ORBIT.maxSpeedLevel, Math.floor(score / ORBIT.speedUpInterval));
+  }
+
+  getSpeedLevel(): number {
+    return this.speedLevel;
+  }
+
   private getPowerLabels(): string[] {
     const labels: string[] = [];
     if (this.rangeBoostTimer > 0) labels.push(`STAR ${(this.rangeBoostTimer).toFixed(1)}s`);
@@ -497,6 +604,8 @@ export class Game {
       const progress = Math.min(100, Math.floor((this.sweepAngle / (Math.PI * 2)) * 100));
       labels.push(`SWEEP ${progress}%`);
     }
+    if (this.shieldTimer > 0) labels.push(`SHIELD ${(this.shieldTimer).toFixed(1)}s`);
+    if (this.slowTimer > 0) labels.push(`SLOW ${(this.slowTimer).toFixed(1)}s`);
     return labels;
   }
 }

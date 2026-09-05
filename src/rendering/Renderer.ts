@@ -7,6 +7,14 @@ export class Renderer {
   private cameraZoom = 1;
   private cameraFocusX = 0;
   private cameraFocusY = 0;
+  private focusVelX = 0;
+  private focusVelY = 0;
+  private zoomVel = 0;
+  private prevPlayerX = 0;
+  private prevPlayerY = 0;
+  private shakeAmp = 0;
+  private shakeTime = 0;
+  private cameraBoost = 0;
   private starPatternLayer: HTMLCanvasElement | null = null;
   private starPatternVariant = 0;
 
@@ -138,6 +146,13 @@ export class Renderer {
     playerX: number,
     playerY: number
   ): void {
+    dt = Math.min(dt, 0.033);
+
+    const playerVX = dt > 0 ? (playerX - this.prevPlayerX) / dt : 0;
+    const playerVY = dt > 0 ? (playerY - this.prevPlayerY) / dt : 0;
+    this.prevPlayerX = playerX;
+    this.prevPlayerY = playerY;
+
     const desiredAngle = playerAngle * CAMERA.rotationInfluence;
     const angleT = 1 - Math.exp(-dt * CAMERA.smoothFactor);
     this.cameraAngle += this.getAngleDelta(this.cameraAngle, desiredAngle) * angleT;
@@ -147,23 +162,80 @@ export class Renderer {
     const mobileZoomFactor = shortSide < 560 ? 0.82 : shortSide < 760 ? 0.9 : 1;
     const dynamicZoomIn = CAMERA.zoomIn * mobileZoomFactor;
     const dynamicZoomOut = CAMERA.zoomOut * mobileZoomFactor;
-    const desiredZoom = dynamicZoomIn + (dynamicZoomOut - dynamicZoomIn) * radiusRatio;
-    const zoomT = 1 - Math.exp(-dt * CAMERA.zoomSmoothFactor);
-    this.cameraZoom += (desiredZoom - this.cameraZoom) * zoomT;
+
+    let desiredZoom = dynamicZoomIn + (dynamicZoomOut - dynamicZoomIn) * radiusRatio;
+
+    const centerDist = Math.max(24, Math.hypot(playerX - this.centerX, playerY - this.centerY));
+    const radialVX = (playerX - this.centerX) / centerDist;
+    const radialVY = (playerY - this.centerY) / centerDist;
+    const radialSpeed = playerVX * radialVX + playerVY * radialVY;
+    const kick = 1 + Math.max(0, Math.min(1, radialSpeed / CAMERA.zoomKickSpeed)) * CAMERA.zoomKickFactor;
+    desiredZoom *= kick;
+
+    this.zoomStep(desiredZoom, dt);
 
     const rawFollow =
       (radiusRatio - CAMERA.jumpFollowStartRatio) /
       Math.max(0.001, 1 - CAMERA.jumpFollowStartRatio);
     const clamped = Math.max(0, Math.min(1, rawFollow));
     const eased = clamped * clamped * (3 - 2 * clamped);
-    const followWeight = eased * CAMERA.jumpFollowMaxWeight;
-    const desiredFocusX = this.centerX + (playerX - this.centerX) * followWeight;
-    const desiredFocusY = this.centerY + (playerY - this.centerY) * followWeight;
-    const focusT = 1 - Math.exp(-dt * CAMERA.jumpFollowSmoothFactor);
-    this.cameraFocusX += (desiredFocusX - this.cameraFocusX) * focusT;
-    this.cameraFocusY += (desiredFocusY - this.cameraFocusY) * focusT;
+    const followWeight = Math.max(eased * CAMERA.jumpFollowMaxWeight, this.cameraBoost);
+
+    const playerSpeed = Math.hypot(playerVX, playerVY);
+    const lookT = Math.min(1, playerSpeed / CAMERA.lookSpeed);
+    const lookDist = lookT * CAMERA.lookaheadDistance;
+    const ldx = playerSpeed > 0.001 ? (playerVX / playerSpeed) * lookDist : 0;
+    const ldy = playerSpeed > 0.001 ? (playerVY / playerSpeed) * lookDist : 0;
+
+    const desiredFocusX = this.centerX + (playerX - this.centerX) * followWeight + ldx;
+    const desiredFocusY = this.centerY + (playerY - this.centerY) * followWeight + ldy;
+
+    this.focusStep(desiredFocusX, desiredFocusY, dt);
 
     this.keepPlayerInFrame(playerX, playerY);
+
+    this.shakeAmp *= Math.exp(-dt * CAMERA.shakeDecay);
+    if (this.shakeAmp < 0.05) this.shakeAmp = 0;
+    this.shakeTime += dt;
+  }
+
+  addShake(amount: number): void {
+    this.shakeAmp = Math.min(CAMERA.shakeMaxAmp, this.shakeAmp + amount);
+  }
+
+  setCameraBoost(boost: number): void {
+    this.cameraBoost = Math.max(0, Math.min(1, boost));
+  }
+
+  get shakeOffsetX(): number {
+    if (this.shakeAmp <= 0) return 0;
+    const s = this.shakeAmp * Math.sin(this.shakeTime * 51);
+    const s2 = this.shakeAmp * 0.7 * Math.sin(this.shakeTime * 67 + 1.7);
+    return s + s2;
+  }
+
+  get shakeOffsetY(): number {
+    if (this.shakeAmp <= 0) return 0;
+    const s = this.shakeAmp * Math.cos(this.shakeTime * 47 + 0.9);
+    const s2 = this.shakeAmp * 0.7 * Math.cos(this.shakeTime * 71 + 3.1);
+    return s + s2;
+  }
+
+  private zoomStep(target: number, dt: number): void {
+    const stiffness = CAMERA.zoomSpring;
+    const a = -stiffness * (this.cameraZoom - target) - 2 * Math.sqrt(stiffness) * CAMERA.zoomDamping * this.zoomVel;
+    this.zoomVel += a * dt;
+    this.cameraZoom += this.zoomVel * dt;
+  }
+
+  private focusStep(targetX: number, targetY: number, dt: number): void {
+    const stiffness = CAMERA.focusSpring;
+    const ax = -stiffness * (this.cameraFocusX - targetX) - 2 * Math.sqrt(stiffness) * CAMERA.focusDamping * this.focusVelX;
+    const ay = -stiffness * (this.cameraFocusY - targetY) - 2 * Math.sqrt(stiffness) * CAMERA.focusDamping * this.focusVelY;
+    this.focusVelX += ax * dt;
+    this.focusVelY += ay * dt;
+    this.cameraFocusX += this.focusVelX * dt;
+    this.cameraFocusY += this.focusVelY * dt;
   }
 
   private keepPlayerInFrame(playerX: number, playerY: number): void {
@@ -200,6 +272,14 @@ export class Renderer {
     this.cameraZoom = 1;
     this.cameraFocusX = this.centerX;
     this.cameraFocusY = this.centerY;
+    this.focusVelX = 0;
+    this.focusVelY = 0;
+    this.zoomVel = 0;
+    this.prevPlayerX = this.centerX;
+    this.prevPlayerY = this.centerY;
+    this.shakeAmp = 0;
+    this.shakeTime = 0;
+    this.cameraBoost = 0;
   }
 
   beginWorld(): void {
@@ -208,6 +288,12 @@ export class Renderer {
     this.ctx.rotate(-this.cameraAngle);
     this.ctx.scale(this.cameraZoom, this.cameraZoom);
     this.ctx.translate(-this.cameraFocusX, -this.cameraFocusY);
+    if (this.shakeAmp > 0) {
+      this.ctx.translate(
+        this.shakeOffsetX / this.cameraZoom,
+        this.shakeOffsetY / this.cameraZoom
+      );
+    }
   }
 
   endWorld(): void {

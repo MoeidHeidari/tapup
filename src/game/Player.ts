@@ -1,10 +1,11 @@
-import { COLORS, JUMP, ORBIT, RADIUS, PLAYER } from '../config/constants';
+import { COLORS, JUMP, ORBIT, RADIUS, PLAYER, POWER } from '../config/constants';
 
 export class Player {
   x = 0;
   y = 0;
   private angle = 0;
   private readonly angularSpeed = ORBIT.baseAngularSpeed;
+  private angularSpeedMultiplier = 1;
   private radius = RADIUS.orbit;
   private maxRadius = RADIUS.maxRadius;
   private radialVelocity = 0;
@@ -17,6 +18,11 @@ export class Player {
   private centerX = 0;
   private centerY = 0;
   private trail: { x: number; y: number; age: number }[] = [];
+  private shieldPulse = 0;
+  private shieldActive = false;
+  private shieldPhase = 0;
+  private spinning = false;
+  private spinAngle = 0;
 
   constructor(cx: number, cy: number) {
     this.centerX = cx;
@@ -27,7 +33,7 @@ export class Player {
   update(dt: number, elapsed: number, gravityScale = 1): void {
     const radiusForRotation = Math.max(this.radius, 1);
     const outwardScale = Math.min(1, RADIUS.orbit / radiusForRotation);
-    const effectiveAngularSpeed = this.angularSpeed * outwardScale;
+    const effectiveAngularSpeed = this.angularSpeed * this.angularSpeedMultiplier * outwardScale;
     this.angle += effectiveAngularSpeed * dt;
     this.totalAngle += effectiveAngularSpeed * dt;
 
@@ -57,6 +63,16 @@ export class Player {
 
     this.jumpKick = Math.max(0, this.jumpKick - dt * 8.5);
     this.collectPulse = Math.max(0, this.collectPulse - dt * 6.2);
+    this.shieldPulse = Math.max(0, this.shieldPulse - dt * 4.5);
+    this.shieldPhase += dt * 5;
+
+    if (this.spinning) {
+      this.spinAngle += POWER.spinAngularSpeed * dt;
+      if (this.spinAngle >= Math.PI * 2) {
+        this.spinAngle = 0;
+        this.spinning = false;
+      }
+    }
 
     this.updatePosition();
     this.updateTrail(dt);
@@ -78,9 +94,27 @@ export class Player {
     this.jumpKick = 1;
   }
 
+  triggerShieldPulse(): void {
+    this.shieldPulse = 1;
+  }
+
+  setShieldActive(active: boolean): void {
+    this.shieldActive = active;
+  }
+
   onWhiteCollected(): void {
     // White pickups are score-only feedback and do not affect radial motion.
     this.collectPulse = 1;
+  }
+
+  startSpin(): void {
+    this.spinning = true;
+    this.spinAngle = 0;
+  }
+
+  endSpin(): void {
+    this.spinning = false;
+    this.spinAngle = 0;
   }
 
   private updatePosition(): void {
@@ -131,7 +165,7 @@ export class Player {
 
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.rotate(this.angle);
+    ctx.rotate(this.angle + this.spinAngle);
     ctx.scale(stretch, squash);
 
     ctx.beginPath();
@@ -170,6 +204,39 @@ export class Player {
     ctx.arc(eyeOffsetX + lookX + 0.25, eyeYOffset - 0.1, 0.24, 0, Math.PI * 2);
     ctx.fillStyle = COLORS.playerHighlight;
     ctx.fill();
+
+    if (this.shieldActive || this.shieldPulse > 0) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.shieldPhase);
+      const sr = PLAYER.radius + 8 + (this.shieldActive ? pulse * 2.5 : this.shieldPulse * 4);
+      ctx.beginPath();
+      ctx.arc(0, 0, sr, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(111,240,255,${this.shieldActive ? 0.55 + pulse * 0.35 : 0.25 + this.shieldPulse * 0.55})`;
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, sr + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(111,240,255,${this.shieldActive ? 0.12 + pulse * 0.1 : 0})`;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+
+      const g = ctx.createRadialGradient(0, 0, sr * 0.4, 0, 0, sr + 6);
+      g.addColorStop(0, 'rgba(111,240,255,0)');
+      g.addColorStop(1, `rgba(111,240,255,${this.shieldActive ? 0.22 + pulse * 0.1 : 0.35 * this.shieldPulse})`);
+      ctx.beginPath();
+      ctx.arc(0, 0, sr + 6, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+
+      for (let i = 0; i < 3; i++) {
+        const a = this.shieldPhase * 1.4 + i * ((Math.PI * 2) / 3);
+        const arcR = sr;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * arcR, Math.sin(a) * arcR, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(170,244,255,${this.shieldActive ? 0.7 + pulse * 0.3 : 0})`;
+        ctx.fill();
+      }
+    }
 
     ctx.restore();
   }
@@ -221,6 +288,10 @@ export class Player {
     }
   }
 
+  setAngularSpeedMultiplier(multiplier: number): void {
+    this.angularSpeedMultiplier = multiplier;
+  }
+
   reset(cx: number, cy: number): void {
     this.centerX = cx;
     this.centerY = cy;
@@ -228,12 +299,18 @@ export class Player {
     this.radius = RADIUS.orbit;
     this.maxRadius = RADIUS.maxRadius;
     this.radialVelocity = 0;
+    this.angularSpeedMultiplier = 1;
+    this.shieldPulse = 0;
+    this.shieldActive = false;
+    this.shieldPhase = 0;
     this.jumpKick = 0;
     this.collectPulse = 0;
     this.jumpCharges = JUMP.maxCharges;
     this.jumpRechargeTimer = 0;
     this.totalAngle = 0;
     this.reportedTurns = 0;
+    this.spinning = false;
+    this.spinAngle = 0;
     this.trail = [];
     this.updatePosition();
   }

@@ -17,6 +17,9 @@ export const ORBIT = {
   angularAcceleration: 0,
   maxAngularSpeed: 1.7,
   smoothFactor: 5.5,
+  speedUpInterval: 100,
+  speedUpPerLevel: 0.12,
+  maxSpeedLevel: 5,
 };
 
 export const RADIUS = {
@@ -60,7 +63,22 @@ export const OBSTACLE = {
   minAngularSeparation: 0.18,
   splitChance: 0.5,
   orangeOnlyChance: 0.2,
-  powerupChance: 0.22,
+  powerupChance: 0.26,
+  fadeInTime: 0.25,
+  phantomMinAlpha: 0.08,
+  phantomActiveRange: 300,
+  shrinkMinFactor: 0.55,
+  homingTurnRate: 0.5,
+  homingMinRange: 60,
+  homingUnlockScore: 220,
+  phantomUnlockScore: 300,
+  shrinkerUnlockScore: 380,
+  speedLevelInterval: 100,
+  goldChance: 0.14,
+};
+
+export const GOLD = {
+  points: 10,
 };
 
 export const POWER = {
@@ -70,18 +88,30 @@ export const POWER = {
   hitBounceImpulse: 120,
   magnetDuration: 1.1,
   magnetPull: 2600,
-  sweepAngularSpeed: 4.8,
+  sweepAngularSpeed: 7.5,
+  spinAngularSpeed: 7.5,
+  shieldDuration: 5,
+  slowDuration: 4,
+  slowFactor: 0.42,
 };
 
 export const CAMERA = {
-  rotationInfluence: 0.18,
-  smoothFactor: 1.1,
-  zoomIn: 1.36,
-  zoomOut: 0.86,
-  zoomSmoothFactor: 0.9,
-  jumpFollowStartRatio: 0.58,
-  jumpFollowMaxWeight: 0.52,
-  jumpFollowSmoothFactor: 1.05,
+  rotationInfluence: 0.2,
+  smoothFactor: 1.5,
+  zoomIn: 1.42,
+  zoomOut: 0.84,
+  zoomSpring: 8.0,
+  zoomDamping: 0.78,
+  zoomKickSpeed: 700,
+  zoomKickFactor: 0.42,
+  jumpFollowStartRatio: 0.5,
+  jumpFollowMaxWeight: 0.56,
+  focusSpring: 7.0,
+  focusDamping: 0.82,
+  lookSpeed: 260,
+  lookaheadDistance: 46,
+  shakeDecay: 3.4,
+  shakeMaxAmp: 16,
 };
 
 export const PLAYER = {

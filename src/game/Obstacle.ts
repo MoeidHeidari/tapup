@@ -2,10 +2,10 @@ import { OBSTACLE, POWER, RADIUS } from '../config/constants';
 
 type Shape = 'circle' | 'roundedRect' | 'cone';
 type ColorMode = 'split' | 'white' | 'orange';
-type ObstacleKind = 'normal' | 'master' | 'star' | 'sweep' | 'magnet' | 'nova';
-type EnemyVariant = 'basic' | 'drift' | 'orbit' | 'slicer';
+type ObstacleKind = 'normal' | 'master' | 'gold' | 'star' | 'sweep' | 'magnet' | 'nova' | 'shield' | 'slow';
+type EnemyVariant = 'basic' | 'drift' | 'orbit' | 'slicer' | 'homing' | 'phantom' | 'shrinker';
 
-export type CollisionResult = 'none' | 'white' | 'orange' | 'power-star' | 'power-sweep' | 'power-magnet' | 'power-nova';
+export type CollisionResult = 'none' | 'white' | 'gold' | 'orange' | 'power-star' | 'power-sweep' | 'power-magnet' | 'power-nova' | 'power-shield' | 'power-slow';
 
 interface ParticleData {
   x: number;
@@ -25,6 +25,7 @@ interface ObstacleTickStats {
 
 interface MagnetBurstResult {
   whiteCollected: number;
+  goldCollected: number;
 }
 
 export interface ObstacleTuning {
@@ -52,6 +53,7 @@ interface ObstacleData {
   variant: EnemyVariant;
   driftSeed: number;
   orbitDir: number;
+  baseSize: number;
 }
 
 export class ObstacleManager {
@@ -66,6 +68,9 @@ export class ObstacleManager {
   private magnetBurstTimer = 0;
   private magnetX = 0;
   private magnetY = 0;
+  private magnetPhase = 0;
+  private playerX = 0;
+  private playerY = 0;
 
   constructor(cx: number, cy: number) {
     this.centerX = cx;
@@ -89,6 +94,7 @@ export class ObstacleManager {
         variant: 'basic',
         driftSeed: Math.random() * Math.PI * 2,
         orbitDir: Math.random() < 0.5 ? -1 : 1,
+        baseSize: 0,
       });
     }
   }
@@ -101,16 +107,21 @@ export class ObstacleManager {
     playerAngle: number,
     playerX: number,
     playerY: number,
-    playerRadius: number
+    playerRadius: number,
+    timeScale = 1
   ): ObstacleTickStats {
     const stats: ObstacleTickStats = { passed: 0, nearMisses: 0 };
+    const sdt = dt * timeScale;
+    this.playerX = playerX;
+    this.playerY = playerY;
 
-    this.updateParticles(dt);
-    this.updateMagnetParticles(dt);
-    this.magnetBurstTimer = Math.max(0, this.magnetBurstTimer - dt);
-    this.powerupSpawnTimer += dt;
+    this.updateParticles(sdt);
+    this.updateMagnetParticles(sdt);
+    this.magnetBurstTimer = Math.max(0, this.magnetBurstTimer - sdt);
+    this.magnetPhase += dt * 4;
+    this.powerupSpawnTimer += sdt;
 
-    this.spawnTimer += dt;
+    this.spawnTimer += sdt;
     const scorePressure = Math.log2(score + 1) * OBSTACLE.scoreSpawnInfluence;
     const spawnSlope = elapsed * OBSTACLE.spawnIntervalDecrease * tuning.spawnRateMultiplier;
     const scoreSlope = scorePressure * tuning.spawnRateMultiplier;
@@ -121,19 +132,24 @@ export class ObstacleManager {
 
     while (this.spawnTimer >= this.spawnInterval) {
       this.spawnTimer -= this.spawnInterval;
+      if (this.spawnTimer < 0) this.spawnTimer = 0;
       this.spawn(playerAngle, elapsed, score, tuning);
     }
 
     for (const o of this.pool) {
       if (!o.active) continue;
 
-      o.age += dt;
-      this.applyVariantMotion(o, dt);
+      o.age += sdt;
+      this.applyVariantMotion(o, sdt, playerAngle);
       const speedCap = (OBSTACLE.maxSpeed + elapsed * 0.4) * tuning.speedMultiplier;
-      o.speed = Math.min(o.speed + OBSTACLE.speedIncrease * dt * tuning.speedMultiplier, speedCap);
-      o.radialDistance += o.speed * dt;
+      o.speed = Math.min(o.speed + OBSTACLE.speedIncrease * sdt * tuning.speedMultiplier, speedCap);
+      o.radialDistance += o.speed * sdt;
       o.x = this.centerX + Math.cos(o.angle) * o.radialDistance;
       o.y = this.centerY + Math.sin(o.angle) * o.radialDistance;
+      if (o.variant === 'shrinker' && o.kind === 'normal') {
+        const shrinkT = Math.min(1, o.radialDistance / OBSTACLE.maxDistance);
+        o.size = o.baseSize * (1 - shrinkT * (1 - OBSTACLE.shrinkMinFactor));
+      }
       if ((o.kind === 'normal' || o.kind === 'master') && o.shape === 'cone') {
         o.rotation = o.angle + Math.PI * 0.5;
       } else {
@@ -197,6 +213,22 @@ export class ObstacleManager {
         o.active = false;
         return 'power-nova';
       }
+      if (o.kind === 'shield') {
+        this.spawnExplosion(o.x, o.y, '#6ff0ff');
+        o.active = false;
+        return 'power-shield';
+      }
+      if (o.kind === 'slow') {
+        this.spawnExplosion(o.x, o.y, '#c792ff');
+        o.active = false;
+        return 'power-slow';
+      }
+
+      if (o.kind === 'gold') {
+        this.spawnExplosion(o.x, o.y, '#ffd93d');
+        o.active = false;
+        return 'gold';
+      }
 
       if (o.kind === 'master') {
         this.spawnExplosion(o.x, o.y, '#ff6a45');
@@ -251,13 +283,14 @@ export class ObstacleManager {
 
   applyMagnetBurst(playerX: number, playerY: number, dt: number, pull: number): MagnetBurstResult {
     if (this.magnetBurstTimer <= 0) {
-      return { whiteCollected: 0 };
+      return { whiteCollected: 0, goldCollected: 0 };
     }
 
     this.magnetX = playerX;
     this.magnetY = playerY;
 
     let whiteCollected = 0;
+    let goldCollected = 0;
 
     for (const o of this.pool) {
       if (!o.active || !this.isWhiteCollectible(o)) continue;
@@ -279,30 +312,42 @@ export class ObstacleManager {
 
       if (dist < this.getCollisionRadius(o) + 17) {
         o.active = false;
-        this.spawnExplosion(o.x, o.y, '#7ad7ff');
-        whiteCollected += 1;
+        this.spawnExplosion(o.x, o.y, o.kind === 'gold' ? '#ffd93d' : '#7ad7ff');
+        if (o.kind === 'gold') goldCollected += 1;
+        else whiteCollected += 1;
       }
     }
 
-    return { whiteCollected };
+    return { whiteCollected, goldCollected };
   }
 
   isMagnetBurstActive(): boolean {
     return this.magnetBurstTimer > 0;
   }
 
-  consumeWhitesBySweep(prevAngle: number, currentAngle: number): number {
+  consumeAllBySweep(prevAngle: number, currentAngle: number): number {
     let collected = 0;
 
     for (const o of this.pool) {
-      if (!o.active || !this.isWhiteCollectible(o)) continue;
+      if (!o.active) continue;
       if (!this.anglePassed(prevAngle, currentAngle, o.angle)) continue;
       o.active = false;
-      this.spawnExplosion(o.x, o.y, '#ffffff');
+      this.spawnExplosion(o.x, o.y, this.getObjectColor(o));
       collected += 1;
     }
 
     return collected;
+  }
+
+  private getObjectColor(o: ObstacleData): string {
+    if (o.kind === 'gold' || o.kind === 'star') return '#ffd93d';
+    if (o.kind === 'magnet') return '#7ad7ff';
+    if (o.kind === 'sweep') return '#8cff66';
+    if (o.kind === 'nova') return '#ff7df0';
+    if (o.kind === 'shield') return '#6ff0ff';
+    if (o.kind === 'slow') return '#c792ff';
+    if (o.kind === 'master' || o.colorMode === 'orange') return '#ff8c42';
+    return '#ffffff';
   }
 
   clearEnemiesAbovePlayer(playerX: number, playerY: number): number {
@@ -344,6 +389,13 @@ export class ObstacleManager {
         const smooth = Math.max(0, Math.min(1, t));
         alpha = 1 - (smooth * smooth * (3 - 2 * smooth));
       }
+      if (o.variant === 'phantom') {
+        const pdx = o.x - this.playerX;
+        const pdy = o.y - this.playerY;
+        const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+        const ramp = Math.min(1, Math.max(0, (OBSTACLE.phantomActiveRange - pdist) / 160));
+        alpha *= OBSTACLE.phantomMinAlpha + (1 - OBSTACLE.phantomMinAlpha) * ramp;
+      }
 
       ctx.save();
       ctx.translate(o.x, o.y);
@@ -357,6 +409,8 @@ export class ObstacleManager {
         if (o.kind === 'master') {
           this.drawMasterAura(ctx, o.size);
         }
+      } else if (o.kind === 'gold') {
+        this.drawGoldObstacle(ctx, o);
       } else {
         this.drawPowerup(ctx, o);
       }
@@ -376,27 +430,49 @@ export class ObstacleManager {
 
     if (this.magnetBurstTimer > 0) {
       const t = this.magnetBurstTimer / POWER.magnetDuration;
-      const pulse = 1 - t;
+      const open = 1 - t;
 
       ctx.save();
-      ctx.translate(this.magnetX, this.magnetY);
+      ctx.translate(this.playerX, this.playerY);
 
-      const ringR = 20 + pulse * 94;
-      const g = ctx.createRadialGradient(0, 0, 2, 0, 0, ringR);
-      g.addColorStop(0, 'rgba(173,235,255,0.78)');
-      g.addColorStop(0.42, 'rgba(89,189,240,0.36)');
+      const glowR = 26 + open * 34 + Math.sin(this.magnetPhase * 0.8) * 3;
+      const g = ctx.createRadialGradient(0, 0, 2, 0, 0, glowR);
+      g.addColorStop(0, 'rgba(173,235,255,0.85)');
+      g.addColorStop(0.38, 'rgba(89,189,240,0.38)');
       g.addColorStop(1, 'rgba(122,215,255,0.01)');
       ctx.beginPath();
-      ctx.arc(0, 0, ringR, 0, Math.PI * 2);
+      ctx.arc(0, 0, glowR, 0, Math.PI * 2);
       ctx.fillStyle = g;
       ctx.fill();
 
       for (let i = 0; i < 3; i++) {
-        const off = i * 0.62;
+        const a = this.magnetPhase * 1.1 + i * ((Math.PI * 2) / 3);
+        const r = 20 + open * (20 + i * 4);
         ctx.beginPath();
-        ctx.arc(0, 0, 18 + pulse * (70 + i * 16), -pulse * 12 + off, -pulse * 12 + off + Math.PI * 0.95);
-        ctx.strokeStyle = `rgba(160,236,255,${0.65 - i * 0.15})`;
-        ctx.lineWidth = 3 - i * 0.55;
+        ctx.arc(0, 0, r, a + Math.PI * 0.35, a + Math.PI * 0.75);
+        ctx.strokeStyle = `rgba(160,236,255,${0.62 - i * 0.14})`;
+        ctx.lineWidth = 3 - i * 0.6;
+        ctx.stroke();
+      }
+
+      for (let i = 0; i < 6; i++) {
+        const a = this.magnetPhase + (i * Math.PI * 2) / 6;
+        const r = 18 + open * 30 + (i % 2) * 6;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r, Math.sin(a) * r, 2.1, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(195,242,255,${0.55 + open * 0.35})`;
+        ctx.fill();
+      }
+
+      for (let i = 0; i < 4; i++) {
+        const a = this.magnetPhase * -0.9 + i * Math.PI * 0.5;
+        const from = 16 + open * 14;
+        const to = 6 + open * 6;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * from, Math.sin(a) * from);
+        ctx.lineTo(Math.cos(a) * to, Math.sin(a) * to);
+        ctx.strokeStyle = `rgba(220,248,255,${0.3 + open * 0.4})`;
+        ctx.lineWidth = 1.6;
         ctx.stroke();
       }
 
@@ -432,6 +508,29 @@ export class ObstacleManager {
 
     ctx.restore();
     this.strokeShape(ctx, o.shape, o.size);
+  }
+
+  private drawGoldObstacle(ctx: CanvasRenderingContext2D, o: ObstacleData): void {
+    const r = o.size * 0.55;
+    const pulse = 0.5 + 0.5 * Math.sin(o.age * 5);
+
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,217,61,${0.1 + pulse * 0.1})`;
+    ctx.fill();
+
+    ctx.rotate(Math.PI / 4);
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r, 0);
+    ctx.lineTo(0, r);
+    ctx.lineTo(-r, 0);
+    ctx.closePath();
+    ctx.fillStyle = '#ffd93d';
+    ctx.fill();
+    ctx.strokeStyle = '#f6b800';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
   }
 
   private drawMasterAura(ctx: CanvasRenderingContext2D, size: number): void {
@@ -513,6 +612,37 @@ export class ObstacleManager {
       ctx.closePath();
       ctx.fillStyle = '#ffc1f8';
       ctx.fill();
+      return;
+    }
+
+    if (o.kind === 'shield') {
+      ctx.beginPath();
+      ctx.arc(0, 0, baseRadius * 0.92, 0, Math.PI * 2);
+      ctx.strokeStyle = '#6ff0ff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, baseRadius * 0.55, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(111,240,255,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      return;
+    }
+
+    if (o.kind === 'slow') {
+      ctx.beginPath();
+      ctx.arc(0, 0, baseRadius * 0.85, -Math.PI * 0.6, Math.PI * 0.6);
+      ctx.strokeStyle = '#c792ff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-baseRadius * 0.3, 0);
+      ctx.lineTo(-baseRadius * 0.08, 0);
+      ctx.moveTo(baseRadius * 0.08, 0);
+      ctx.lineTo(baseRadius * 0.3, 0);
+      ctx.strokeStyle = '#ede0ff';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
       return;
     }
 
@@ -603,6 +733,10 @@ export class ObstacleManager {
   }
 
   private isWhiteCollectible(o: ObstacleData): boolean {
+    if (o.kind === 'gold') return true;
+    if ((o.kind === 'shield' || o.kind === 'slow') && o.colorMode === 'white') {
+      return true;
+    }
     return o.kind === 'normal' && o.colorMode !== 'orange';
   }
 
@@ -639,46 +773,64 @@ export class ObstacleManager {
     if (isPowerup) {
       this.powerupSpawnTimer = 0;
       const roll = Math.random();
-      free.kind = roll < 0.25 ? 'star' : roll < 0.5 ? 'magnet' : roll < 0.75 ? 'sweep' : 'nova';
+      free.kind = roll < 0.2 ? 'star' : roll < 0.4 ? 'magnet' : roll < 0.6 ? 'sweep' : roll < 0.8 ? 'nova' : roll < 0.9 ? 'shield' : 'slow';
       free.shape = 'circle';
       free.size = 24 + Math.random() * 8;
+      free.baseSize = free.size;
       free.colorMode = 'white';
       free.orangeTop = false;
       free.speed *= 0.92;
     } else {
-      const masterChance = this.getMasterSpawnChance(score);
-      const isMaster = score >= OBSTACLE.masterUnlockScore && Math.random() < masterChance;
+      const inOpening = this.openingPatternActive || elapsed < 3.5;
 
-      free.kind = isMaster ? 'master' : 'normal';
-      const roll = Math.random();
-      let colorMode: ColorMode = 'split';
-      const orangeChance = Math.max(0.08, Math.min(0.56, OBSTACLE.orangeOnlyChance + tuning.orangeChanceOffset));
-      if (!isMaster) {
-        if (roll < orangeChance) colorMode = 'orange';
-        else if (roll > orangeChance + OBSTACLE.splitChance) colorMode = 'white';
+      if (!inOpening && Math.random() < OBSTACLE.goldChance) {
+        free.kind = 'gold';
+        free.shape = 'circle';
+        free.size = 20 + Math.random() * 7;
+        free.baseSize = free.size;
+        free.colorMode = 'white';
+        free.orangeTop = false;
+        free.variant = 'basic';
+        free.speed *= 0.94;
       } else {
-        colorMode = 'orange';
-      }
+        const masterChance = this.getMasterSpawnChance(score);
+        const isMaster = !inOpening && score >= OBSTACLE.masterUnlockScore && Math.random() < masterChance;
 
-      const shapeRoll = Math.random();
-      if (shapeRoll < (isMaster ? 0.76 : 0.56)) free.shape = 'circle';
-      else if (shapeRoll < (isMaster ? 0.96 : 0.82)) free.shape = 'roundedRect';
-      else free.shape = 'cone';
-      free.size = OBSTACLE.minSize + Math.random() * (OBSTACLE.maxSize - OBSTACLE.minSize);
-      if (isMaster) {
-        free.size *= 2.05;
-      }
-      if (free.shape === 'circle') {
-        free.size *= 1.12;
-      }
-      if (free.shape === 'cone') {
-        free.size *= 0.74;
-      }
-      free.colorMode = colorMode;
-      free.orangeTop = Math.random() < 0.5;
-      free.variant = this.pickEnemyVariant(score, isMaster);
-      if (isMaster) {
-        free.speed *= 0.84;
+        free.kind = isMaster ? 'master' : 'normal';
+        const roll = Math.random();
+        let colorMode: ColorMode = 'split';
+        const orangeChance = Math.max(0.08, Math.min(0.56, OBSTACLE.orangeOnlyChance + tuning.orangeChanceOffset));
+        if (!isMaster) {
+          if (roll < orangeChance) colorMode = 'orange';
+          else if (roll > orangeChance + OBSTACLE.splitChance) colorMode = 'white';
+        } else {
+          colorMode = 'orange';
+        }
+        if (inOpening) {
+          colorMode = 'white';
+        }
+
+        const shapeRoll = Math.random();
+        if (shapeRoll < (isMaster ? 0.76 : 0.56)) free.shape = 'circle';
+        else if (shapeRoll < (isMaster ? 0.96 : 0.82)) free.shape = 'roundedRect';
+        else free.shape = 'cone';
+        free.size = OBSTACLE.minSize + Math.random() * (OBSTACLE.maxSize - OBSTACLE.minSize);
+        free.baseSize = free.size;
+        if (isMaster) {
+          free.size *= 2.05;
+        }
+        if (free.shape === 'circle') {
+          free.size *= 1.12;
+        }
+        if (free.shape === 'cone') {
+          free.size *= 0.74;
+        }
+        free.colorMode = colorMode;
+        free.orangeTop = Math.random() < 0.5;
+        free.variant = this.pickEnemyVariant(score, isMaster);
+        if (isMaster) {
+          free.speed *= 0.84;
+        }
       }
     }
 
@@ -706,14 +858,14 @@ export class ObstacleManager {
 
     const pullT = 1 - this.magnetBurstTimer / POWER.magnetDuration;
     const count = 5;
-    const radius = 28 + pullT * 110;
+    const radius = 26 + pullT * 46;
 
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
-      const x = this.magnetX + Math.cos(a) * radius;
-      const y = this.magnetY + Math.sin(a) * radius;
-      const vx = (this.magnetX - x) * (2.4 + Math.random() * 1.5);
-      const vy = (this.magnetY - y) * (2.4 + Math.random() * 1.5);
+      const x = this.playerX + Math.cos(a) * radius;
+      const y = this.playerY + Math.sin(a) * radius;
+      const vx = (this.playerX - x) * (2.4 + Math.random() * 1.5);
+      const vy = (this.playerY - y) * (2.4 + Math.random() * 1.5);
 
       this.particles.push({
         x,
@@ -746,6 +898,26 @@ export class ObstacleManager {
     }
   }
 
+  celebrate(x: number, y: number): void {
+    const colors = ['#ffd93d', '#ffffff', '#ffb347', '#7ad7ff'];
+    const count = 24;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const speed = 60 + Math.random() * 240;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        size: 1.4 + Math.random() * 2.8,
+        age: 0,
+        life: 0.4 + Math.random() * 0.5,
+        color,
+      });
+    }
+  }
+
   private particleColorWithAlpha(hex: string, alpha: number): string {
     if (hex === '#ffffff') {
       return `rgba(255,255,255,${alpha})`;
@@ -758,6 +930,12 @@ export class ObstacleManager {
     }
     if (hex === '#8cff66') {
       return `rgba(140,255,102,${alpha})`;
+    }
+    if (hex === '#6ff0ff') {
+      return `rgba(111,240,255,${alpha})`;
+    }
+    if (hex === '#c792ff') {
+      return `rgba(199,146,255,${alpha})`;
     }
     return `rgba(255,140,66,${alpha})`;
   }
@@ -793,6 +971,7 @@ export class ObstacleManager {
     this.powerupSpawnTimer = 0;
     this.spawnInterval = OBSTACLE.initialSpawnInterval;
     for (const o of this.pool) o.active = false;
+    this.particles = [];
     this.openingPatternActive = true;
     this.magnetBurstTimer = 0;
     this.magnetX = this.centerX;
@@ -807,23 +986,29 @@ export class ObstacleManager {
   }
 
   private seedOpeningCircles(): void {
-    const ringCount = 14;
-    const angleStep = (Math.PI * 2) / ringCount;
-    const radius = RADIUS.orbit + 12;
+    const count = 18;
+    const turns = 1.15;
+    const startAngle = 0.12;
+    const startRadius = RADIUS.orbit - 28;
+    const endRadius = RADIUS.orbit + 46;
 
-    for (let i = 0; i < ringCount; i++) {
+    for (let i = 0; i < count; i++) {
       const free = this.pool.find((o) => !o.active);
       if (!free) return;
 
-      const angle = i * angleStep;
+      const progress = i / count;
+      const angle = startAngle + progress * Math.PI * 2 * turns;
+      const radius = startRadius + (endRadius - startRadius) * progress;
+
       free.active = true;
       free.kind = 'normal';
       free.shape = 'circle';
-      free.size = OBSTACLE.minSize + (OBSTACLE.maxSize - OBSTACLE.minSize) * (0.35 + Math.random() * 0.35);
+      free.size = OBSTACLE.minSize + (OBSTACLE.maxSize - OBSTACLE.minSize) * (0.34 + Math.random() * 0.3);
       free.angle = angle;
       free.radialDistance = radius;
-      free.speed = OBSTACLE.startSpeed * (0.42 + Math.random() * 0.25);
+      free.speed = OBSTACLE.startSpeed * (0.18 + Math.random() * 0.14);
       free.rotation = 0;
+      free.baseSize = free.size;
       free.orangeTop = false;
       free.colorMode = 'white';
       free.age = 0;
@@ -853,12 +1038,37 @@ export class ObstacleManager {
       if (roll < 0.78) return 'drift';
       return 'orbit';
     }
+    if (score < OBSTACLE.homingUnlockScore) {
+      const roll = Math.random();
+      if (roll < 0.35) return 'drift';
+      if (roll < 0.62) return 'orbit';
+      if (roll < 0.9) return 'slicer';
+      return 'basic';
+    }
+    if (score < OBSTACLE.phantomUnlockScore) {
+      const roll = Math.random();
+      if (roll < 0.28) return 'drift';
+      if (roll < 0.5) return 'orbit';
+      if (roll < 0.7) return 'slicer';
+      if (roll < 0.9) return 'homing';
+      return 'basic';
+    }
+    if (score < OBSTACLE.shrinkerUnlockScore) {
+      const roll = Math.random();
+      if (roll < 0.24) return 'drift';
+      if (roll < 0.42) return 'orbit';
+      if (roll < 0.58) return 'slicer';
+      if (roll < 0.72) return 'homing';
+      return 'phantom';
+    }
 
     const roll = Math.random();
-    if (roll < 0.35) return 'drift';
-    if (roll < 0.68) return 'orbit';
-    if (roll < 0.9) return 'slicer';
-    return 'basic';
+    if (roll < 0.2) return 'drift';
+    if (roll < 0.36) return 'orbit';
+    if (roll < 0.52) return 'slicer';
+    if (roll < 0.68) return 'homing';
+    if (roll < 0.84) return 'phantom';
+    return 'shrinker';
   }
 
   private getMasterSpawnChance(score: number): number {
@@ -870,7 +1080,7 @@ export class ObstacleManager {
     return OBSTACLE.masterBaseChance + (OBSTACLE.masterMaxChance - OBSTACLE.masterBaseChance) * growth;
   }
 
-  private applyVariantMotion(o: ObstacleData, dt: number): void {
+  private applyVariantMotion(o: ObstacleData, dt: number, playerAngle: number): void {
     if (o.kind !== 'normal' && o.kind !== 'master') {
       return;
     }
@@ -889,6 +1099,17 @@ export class ObstacleManager {
     if (o.variant === 'slicer') {
       const wiggle = Math.sin(o.age * 8 + o.driftSeed) * 0.3;
       o.angle += (o.orbitDir * 0.12 + wiggle) * dt;
+      return;
+    }
+
+    if (o.variant === 'homing') {
+      const delta = this.getDeltaAngle(o.angle, playerAngle);
+      const turn = Math.sign(delta) * Math.min(Math.abs(delta), OBSTACLE.homingTurnRate * dt);
+      o.angle += turn;
+      const outward = Math.cos(delta);
+      if (outward > 0) {
+        o.speed += OBSTACLE.homingTurnRate * 6 * outward * dt;
+      }
     }
   }
 }

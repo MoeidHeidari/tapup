@@ -1,17 +1,17 @@
-type PowerType = 'star' | 'magnet' | 'sweep' | 'nova';
+type PowerType = 'star' | 'magnet' | 'sweep' | 'nova' | 'shield' | 'slow';
 
 const SFX_FILES = {
-  start: '/vfx/universfield-video-game-bonus-323603.mp3',
-  whiteHit: '/vfx/universfield-game-bonus-03-487857.mp3',
-  multiplier: '/vfx/universfield-video-game-bonus-323603.mp3',
-  powerStar: '/vfx/universfield-video-game-bonus-323603.mp3',
-  powerMagnet: '/vfx/universfield-game-bonus-02-294436.mp3',
-  powerSweep: '/vfx/universfield-game-bonus-03-487857.mp3',
-  powerNova: '/vfx/universfield-video-game-bonus-323603.mp3',
-  gameOver: '/vfx/freesound_community-game-over-arcade-6435.mp3',
-  achievement: '/vfx/universfield-game-bonus-03-487857.mp3',
-  achievementRare: '/vfx/universfield-video-game-bonus-323603.mp3',
-  achievementEpic: '/vfx/universfield-game-bonus-02-294436.mp3',
+  start: 'vfx/universfield-video-game-bonus-323603.mp3',
+  whiteHit: 'vfx/universfield-game-bonus-03-487857.mp3',
+  multiplier: 'vfx/universfield-video-game-bonus-323603.mp3',
+  powerStar: 'vfx/universfield-video-game-bonus-323603.mp3',
+  powerMagnet: 'vfx/universfield-game-bonus-02-294436.mp3',
+  powerSweep: 'vfx/universfield-game-bonus-03-487857.mp3',
+  powerNova: 'vfx/universfield-video-game-bonus-323603.mp3',
+  gameOver: 'vfx/freesound_community-game-over-arcade-6435.mp3',
+  achievement: 'vfx/universfield-game-bonus-03-487857.mp3',
+  achievementRare: 'vfx/universfield-video-game-bonus-323603.mp3',
+  achievementEpic: 'vfx/universfield-game-bonus-02-294436.mp3',
 } as const;
 
 type SfxKey = keyof typeof SFX_FILES;
@@ -92,6 +92,14 @@ export class SoundManager {
     }
     if (type === 'sweep') {
       this.playSfx('powerSweep', 0.29);
+      return;
+    }
+    if (type === 'shield') {
+      this.playSfx('powerMagnet', 0.3);
+      return;
+    }
+    if (type === 'slow') {
+      this.playSfx('powerSweep', 0.28);
       return;
     }
     this.playSfx('powerNova', 0.33);
